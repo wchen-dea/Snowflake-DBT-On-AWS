@@ -4,12 +4,6 @@ This document provides a high-level overview of the Snowflake-DBT-On-AWS platfor
 
 ## Architecture Diagram
 
-> **Diagram:**
->
-> ![Platform Architecture](docs/images/architecture_diagram.png)
->
-> *(If viewing locally, see `docs/images/architecture_diagram.png`. If not present, use the Mermaid diagram below as a reference.)*
-
 ```mermaid
 flowchart TD
     SourceData --> MinIO
@@ -38,6 +32,79 @@ flowchart TD
     dbtRunner["dbt-runner"]
     DuckDBUI["DuckDB UI"]
     Airflow["Airflow"]
+```
+
+## Component Diagram
+
+This diagram shows the main platform components and their relationships.
+
+```mermaid
+flowchart LR
+    subgraph Storage
+      MinIO["MinIO (S3-compatible)"]
+      DuckDB["DuckDB (Warehouse)"]
+      Snowflake["Snowflake (Cloud Warehouse)"]
+    end
+    subgraph Compute
+      Spark["Spark"]
+      dbtRunner["dbt-runner"]
+    end
+    subgraph Orchestration
+      Airflow["Airflow"]
+    end
+    subgraph UI
+      DuckDBUI["DuckDB UI"]
+    end
+    subgraph Infra
+      Terraform["Terraform"]
+      K8S["Kubernetes"]
+    end
+    SourceData["Source Data (CSV, API)"]
+    Postgres["Postgres (Airflow Metadata)"]
+
+    SourceData --> MinIO
+    MinIO <--> Spark
+    Spark <--> DuckDB
+    Spark <--> MinIO
+    dbtRunner <--> DuckDB
+    dbtRunner <--> Snowflake
+    dbtRunner <--> MinIO
+    dbtRunner <--> Spark
+    DuckDBUI <--> DuckDB
+    Airflow <--> Spark
+    Airflow <--> dbtRunner
+    Airflow <--> DuckDB
+    Airflow <--> MinIO
+    Airflow <--> Postgres
+    Terraform --> K8S
+    K8S --> Airflow
+    K8S --> Spark
+    K8S --> dbtRunner
+    K8S --> MinIO
+    K8S --> DuckDB
+    K8S --> DuckDBUI
+```
+
+## Data Flow Diagram
+
+This diagram illustrates the step-by-step movement of data through the platform.
+
+```mermaid
+flowchart TD
+    A["Source Data (CSV, API)"] --> B["MinIO (Bronze)"]
+    B --> C["Spark (Bronze->Silver)"]
+    C --> D["MinIO (Silver)"]
+    D --> E["dbt-runner (Staging/Vault/Marts)"]
+    E --> F["DuckDB (Warehouse)"]
+    F --> G["DuckDB UI"]
+    E --> H["Snowflake (Cloud, prod/dev)"]
+    subgraph Orchestration
+      Airflow
+    end
+    Airflow --> B
+    Airflow --> C
+    Airflow --> E
+    Airflow --> F
 ```
 
 ## Core Components
