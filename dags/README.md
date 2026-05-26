@@ -1,16 +1,23 @@
 # Airflow DAGs
 
-## Purpose
+This directory contains orchestration pipelines for ingestion, processing, and dbt execution.
 
-This directory contains orchestration DAGs for ingestion, processing, and modeling workflows.
+## DAG Inventory
 
-## Design Principles
+| File | DAG ID | Schedule | Responsibility |
+| --- | --- | --- | --- |
+| `ingestion_dag.py` | `s3_to_snowflake_ingest` | `0 2 * * *` | Run ingestion and load/check raw data in local (DuckDB) or cloud (Snowflake) mode |
+| `processing_dag.py` | `banking_processing_dag` | `0 3 * * *` | Run Spark Bronze/Silver processing and dbt orchestration handoff |
+| `dbt_dag.py` | `dbt_datavault_dag` | `0 4 * * *` | Run dbt Data Vault model execution and validation |
 
-- Kubernetes-native execution via `KubernetesPodOperator`
-- Production-ready defaults (retries, logging, alert hooks)
-- Modular DAG separation by pipeline stage
-- Horizontal scalability for high-volume banking workloads
+## Runtime Notes
 
-## Extension Points
+- DAG behavior changes by `DBT_TARGET` (`local`, `dev`, `prod`).
+- Local mode uses MinIO + DuckDB.
+- Non-local modes expect a valid Airflow Snowflake connection (`SNOWFLAKE_CONN_ID`, default `snowflake_default`).
 
-Add branching logic, SLA sensors, and notification integrations (for example Slack) as pipeline maturity grows.
+## Local Operations
+
+- Start stack: `make up`
+- Open Airflow UI: `http://localhost:8080`
+- Trigger a DAG manually from the UI or CLI in the webserver container.

@@ -1,58 +1,46 @@
 # GitHub Workflows
 
-## Purpose
+This folder contains CI/CD workflow definitions for linting, tests, dbt validation, Terraform planning, and container image publishing.
 
-This directory contains CI/CD workflow definitions for validation, planning, and image build steps.
+## Workflow Files
 
-## Required Secrets
+- `ci.yml`: Python code quality, unit tests, and DAG validation
+- `dbt-test.yml`: dbt deps/seed/run/test/docs flow
+- `terraform-plan.yml`: Terraform plan/apply workflow by environment
+- `docker-build.yml`: image build and push automation
 
-Add these in GitHub: `Settings -> Secrets and variables -> Actions`.
+## Common Secrets
 
-### AWS
+Configure repository secrets in GitHub Actions settings.
+
+### Snowflake
+
+- `SNOWFLAKE_ACCOUNT`
+- `SNOWFLAKE_CI_USER`
+- `SNOWFLAKE_CI_PASSWORD`
+
+### AWS (if used by workflow steps)
 
 - `AWS_ACCESS_KEY_ID_DEV`
 - `AWS_SECRET_ACCESS_KEY_DEV`
 - `AWS_ACCESS_KEY_ID_PROD`
 - `AWS_SECRET_ACCESS_KEY_PROD`
 
-### Snowflake
-
-- `SNOWFLAKE_ACCOUNT`
-- `SNOWFLAKE_USER_DEV`
-- `SNOWFLAKE_PASSWORD_DEV`
-- `SNOWFLAKE_USER_PROD`
-- `SNOWFLAKE_PASSWORD_PROD`
-- `SNOWFLAKE_CI_USER`
-- `SNOWFLAKE_CI_PASSWORD`
-
 ### Optional
 
-- `SLACK_WEBHOOK` (notifications)
+- `SLACK_WEBHOOK`
 
-## Usage
-
-### Run CI pipeline
+## Manual Trigger Examples
 
 ```bash
-# Automatically runs on push/PR to main or develop
-git push origin develop
-```
-
-### Run Terraform plan manually
-
-```bash
+# Run selected workflows manually from the GitHub CLI
+gh workflow run ci.yml
+gh workflow run dbt-test.yml
 gh workflow run terraform-plan.yml -f environment=dev
-```
-
-### Run Terraform apply manually
-
-```bash
-# Production apply should still follow approval controls in workflow design
-gh workflow run terraform-plan.yml -f environment=prod
-```
-
-### Build Docker images manually
-
-```bash
 gh workflow run docker-build.yml
 ```
+
+## Notes
+
+- Branch and path filters are defined inside each workflow file.
+- Keep workflow docs aligned whenever new required secrets are introduced.

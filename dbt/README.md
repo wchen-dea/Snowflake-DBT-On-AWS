@@ -1,37 +1,40 @@
 # dbt Project
 
-## Purpose
+This directory contains the dbt Data Vault project (`banking_vault`).
 
-This directory contains the dbt project implementing Data Vault 2.0 modeling for banking data.
+## Targets
 
-## Modeling Approach
+Targets are defined in the root `profiles.yml`:
 
-- Data Vault 2.0 layers: Hubs, Links, Satellites
-- Staging layer to standardize/hash source data before vault loading
-- Snowflake-oriented materializations (views for staging, incremental/table patterns for vault/marts)
-- Airflow-friendly orchestration via dedicated dbt DAGs
+- `local`: DuckDB + MinIO (default)
+- `dev`: Snowflake development database
+- `prod`: Snowflake production database
 
-## Project Structure
-
-```text
-dbt/
-├── dbt_project.yml
-├── packages.yml
-├── selectors.yml
-├── macros/
-├── models/
-│   ├── staging/
-│   ├── vault/
-│   │   ├── hubs/
-│   │   ├── links/
-│   │   └── satellites/
-│   └── marts/
-└── tests/
-```
-
-## Local Run Example
+Set the active target via environment variable:
 
 ```bash
-# Run dbt from repository root while using root-level profiles.yml
-dbt run --project-dir dbt --profiles-dir .
+export DBT_TARGET=local
+```
+
+## Model Layers
+
+- `models/staging`: source alignment and standardized staging models
+- `models/vault`: Data Vault entities (hubs, links, satellites)
+- `models/marts`: curated business-facing marts
+
+## Common Commands
+
+Run from the repository root:
+
+```bash
+uv run dbt deps --project-dir dbt --profiles-dir .
+uv run dbt debug --project-dir dbt --profiles-dir .
+uv run dbt run --project-dir dbt --profiles-dir .
+uv run dbt test --project-dir dbt --profiles-dir .
+```
+
+Generate docs:
+
+```bash
+uv run dbt docs generate --project-dir dbt --profiles-dir .
 ```

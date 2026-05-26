@@ -1,16 +1,21 @@
 # Spark Jobs
 
-## Purpose
+PySpark workloads for ingestion and transformation stages.
 
-This directory contains PySpark jobs for ingestion and transformation stages.
+## Files
 
-## Design
+- `bronze_ingestion.py`: ingest raw source data into Bronze layer outputs
+- `silver_transform.py`: transform Bronze data into Silver-ready structures
+- `utils/spark_utils.py`: shared Spark utility helpers
+- `data/raw/`: local sample CSV seed data
 
-- Reusable shared helpers in `utils/` and `spark_utils.py`
-- Modular job separation (Bronze ingestion vs Silver transforms)
-- Cloud-ready I/O patterns for S3-backed data movement
-- Orchestration-ready design for Airflow and Kubernetes execution
+## Execution Context
 
-## Notes
+- Local mode runs against Spark standalone in Docker Compose.
+- Storage interfaces use S3-compatible paths (MinIO local, AWS S3 cloud).
+- Jobs are typically launched by Airflow DAGs in `dags/`.
 
-Outputs from Silver transformations are intended to feed downstream dbt Data Vault models.
+## Operational Notes
+
+- Keep Spark configs and package compatibility aligned with Dockerfiles.
+- Any schema changes in Spark outputs should be coordinated with dbt staging models.

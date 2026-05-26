@@ -2,11 +2,11 @@ name: dbt Tests & Documentation
 
 on:
   push:
-    branches: [main, develop]
+    branches: [prod]
     paths:
       - 'dbt/**'
   pull_request:
-    branches: [main]
+    branches: [prod]
     paths:
       - 'dbt/**'
   schedule:
@@ -70,7 +70,7 @@ jobs:
           
       - name: Deploy dbt Docs to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/prod'
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./dbt/target

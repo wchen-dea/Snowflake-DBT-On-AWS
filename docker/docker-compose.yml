@@ -5,13 +5,14 @@
 #   1. minio              — local S3-compatible object storage
 #   2. minio-init         — creates bronze / silver / gold buckets
 #   3. postgres           — Airflow metadata DB
-#   4. spark-master       — Spark standalone master
-#   5. spark-worker       — Spark standalone worker (1 replica)
-#   6. dbt-runner         — runs dbt deps + dbt run on startup
-#   7. duckdb-ui          — official DuckDB Local UI (http://localhost:4213)
-#   8. airflow-init       — DB migration + admin user creation
-#   9. airflow-webserver  — Airflow UI  (http://localhost:8080)
-#  10. airflow-scheduler  — Airflow scheduler
+#   4. duckdb             — local DuckDB runtime + database file lifecycle
+#   5. spark-master       — Spark standalone master
+#   6. spark-worker       — Spark standalone worker (1 replica)
+#   7. dbt-runner         — runs dbt deps + dbt run on startup
+#   8. duckdb-ui          — official DuckDB Local UI (http://localhost:4213)
+#   9. airflow-init       — DB migration + admin user creation
+#  10. airflow-webserver  — Airflow UI  (http://localhost:8080)
+#  11. airflow-scheduler  — Airflow scheduler
 #
 # Local mode (default): dbt → DuckDB,  S3 → MinIO,  Spark → standalone
 # Cloud mode:           set DBT_TARGET=dev + real creds in .env
@@ -186,7 +187,38 @@ services:
     logging: *logging-common
 
   # ----------------------------------------------------------
-  # 4. Spark master — standalone cluster master
+  # 4. DuckDB runtime — creates/owns local warehouse file
+  # ----------------------------------------------------------
+  duckdb:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile-duckdb-ui
+    restart: unless-stopped
+    environment:
+      DUCKDB_PATH: /opt/dbt/warehouse/banking_vault.duckdb
+    volumes:
+      - dbt-warehouse-volume:/opt/dbt/warehouse
+    command: >
+      /bin/sh -c "
+        python -c \"import duckdb, os; p=os.getenv('DUCKDB_PATH', '/opt/dbt/warehouse/banking_vault.duckdb'); duckdb.connect(p).close(); print(f'DuckDB ready at {p}')\";
+        tail -f /dev/null
+      "
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import duckdb, os; p=os.getenv('DUCKDB_PATH','/opt/dbt/warehouse/banking_vault.duckdb'); duckdb.connect(p, read_only=False).close()",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: *logging-common
+
+  # ----------------------------------------------------------
+  # 5. Spark master — standalone cluster master
   #    Web UI (host): http://localhost:8181
   #    Master URL:    spark://spark-master:7077
   #    Image: apache/spark:3.5.1 (official image)
@@ -217,7 +249,7 @@ services:
     restart: unless-stopped
 
   # ----------------------------------------------------------
-  # 5. Spark worker — one worker node (scale up with --scale)
+  # 6. Spark worker — one worker node (scale up with --scale)
   #    Web UI (host): http://localhost:8182
   #    Image: apache/spark:3.5.1 (official image)
   # ----------------------------------------------------------
@@ -246,7 +278,7 @@ services:
     restart: unless-stopped
 
   # ----------------------------------------------------------
-  # 6. dbt runner — runs dbt deps + dbt run against DuckDB
+  # 7. dbt runner — runs dbt deps + dbt run against DuckDB
   #    Shares the dbt-warehouse-volume with Airflow so DAGs
   #    can query the same DuckDB file after a successful run.
   # ----------------------------------------------------------
@@ -268,6 +300,8 @@ services:
       - ../spark_jobs/data/raw:/opt/dbt/data/raw:ro
       - dbt-warehouse-volume:/opt/dbt/warehouse
     depends_on:
+      duckdb:
+        condition: service_healthy
       minio:
         condition: service_healthy
       minio-init:
@@ -275,7 +309,7 @@ services:
     logging: *logging-common
 
   # ----------------------------------------------------------
-  # 7. DuckDB Local UI — official web UI for local warehouse
+  # 8. DuckDB Local UI — official web UI for local warehouse
   #    UI (host): http://localhost:4213
   # ----------------------------------------------------------
   duckdb-ui:
@@ -301,12 +335,14 @@ services:
       retries: 5
       start_period: 10s
     depends_on:
+      duckdb:
+        condition: service_healthy
       dbt-runner:
         condition: service_completed_successfully
     logging: *logging-common
 
   # ----------------------------------------------------------
-  # 8. Airflow init — DB migrations + admin user (runs once)
+  # 9. Airflow init — DB migrations + admin user (runs once)
   # ----------------------------------------------------------
   airflow-init:
     <<: *airflow-common
@@ -360,7 +396,7 @@ services:
     logging: *logging-common
 
   # ----------------------------------------------------------
-  # 9. Airflow webserver — UI at http://localhost:8080
+  # 10. Airflow webserver — UI at http://localhost:8080
   #    Default credentials: airflow / airflow
   # ----------------------------------------------------------
   airflow-webserver:
@@ -391,7 +427,7 @@ services:
     logging: *logging-common
 
   # ----------------------------------------------------------
-  # 10. Airflow scheduler — DAG scheduling and task queuing
+  # 11. Airflow scheduler — DAG scheduling and task queuing
   # ----------------------------------------------------------
   airflow-scheduler:
     <<: *airflow-common

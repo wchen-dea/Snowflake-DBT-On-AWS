@@ -1,11 +1,20 @@
 # Infrastructure
 
+This directory stores deployment descriptors and environment runtime manifests.
+
+## Contents
+
+- `K8S/airflow-deployment.yaml`
+- `K8S/spark-job.yaml`
+- `K8S/dbt-runner.yaml`
+
 ## Purpose
 
-This directory tracks infrastructure definitions and deployment descriptors for the platform runtime.
+- Define Kubernetes workload deployment artifacts for pipeline components.
+- Keep runtime deployment specs separate from Terraform provisioning code.
+- Support environment promotion with explicit manifest versioning.
 
-## Scope
+## Related Paths
 
-- Provision core cloud resources (for example S3, EKS, Snowflake placeholders) via Terraform
-- Define deployment foundations for Airflow, Spark, and dbt workloads on Kubernetes
-- Integrate secure credential paths for AWS and Snowflake access
+- Terraform IaC: `terraform/`
+- Local stack Compose: `docker/docker-compose.yml`

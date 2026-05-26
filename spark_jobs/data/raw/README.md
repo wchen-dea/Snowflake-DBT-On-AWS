@@ -1,16 +1,20 @@
 # Raw Sample Data
 
-## Purpose
+Synthetic CSV seed data used by local ingestion and transformation flows.
 
-This directory stores small synthetic CSV files used for local ingestion and transformation tests.
+## Files
 
-## Data Characteristics
+- `customers.csv`
+- `accounts.csv`
+- `transactions.csv`
 
-- Customer and account keys align to support Hub -> Link -> Satellite testing patterns
-- Transactions mimic realistic banking activity for Silver-layer transformations
-- CSV format is compatible with local PySpark ingestion jobs
-- Data is intentionally small and non-identifiable for safe local development
+## Usage
 
-## Extension
+- `minio-init` in `docker/docker-compose.yml` copies these files into MinIO bucket paths.
+- Spark jobs consume these files through S3-compatible URIs.
+- The dataset is intentionally non-sensitive and small for local development.
 
-Future sample domains can include loans, credit cards, and payment events.
+## Maintenance
+
+- Preserve key relationships across customer/account/transaction records.
+- Update downstream Spark and dbt logic when columns are changed.
