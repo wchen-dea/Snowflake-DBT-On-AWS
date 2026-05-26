@@ -2,6 +2,8 @@
 
 Banking data platform reference project using Airflow, Spark, dbt, Snowflake, Docker, and Terraform.
 
+See [docs/architecture.md](docs/architecture.md) for a high-level architecture diagram and component overview.
+
 ## Scope
 
 - Orchestrate ingestion, processing, and dbt modeling with Airflow DAGs.
@@ -90,6 +92,7 @@ terraform apply
 
 ## Documentation Index
 
+- `docs/architecture.md`: project architecture summary and diagrams
 - `docs/SETUP.md`: setup details and runbook
 - `docker/README.md`: container stack and DuckDB UI troubleshooting
 - `dbt/README.md`: dbt model layout and run commands

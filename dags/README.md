@@ -2,6 +2,8 @@
 
 This directory contains orchestration pipelines for ingestion, processing, and dbt execution.
 
+For a high-level architecture diagram and component map, see [../docs/architecture.md](../docs/architecture.md).
+
 ## DAG Inventory
 
 | File | DAG ID | Schedule | Responsibility |

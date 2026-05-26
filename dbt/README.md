@@ -2,6 +2,8 @@
 
 This directory contains the dbt Data Vault project (`banking_vault`).
 
+For a high-level architecture diagram and component map, see [../docs/architecture.md](../docs/architecture.md).
+
 ## Targets
 
 Targets are defined in the root `profiles.yml`:

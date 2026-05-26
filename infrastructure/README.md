@@ -2,6 +2,8 @@
 
 This directory stores deployment descriptors and environment runtime manifests.
 
+For a high-level architecture diagram and component map, see [../docs/architecture.md](../docs/architecture.md).
+
 ## Contents
 
 - `K8S/airflow-deployment.yaml`

@@ -2,6 +2,8 @@
 
 This directory defines the local development stack and build images.
 
+For a high-level architecture diagram and component map, see [../docs/architecture.md](../docs/architecture.md).
+
 ## Files
 
 - `docker-compose.yml`: local multi-service platform

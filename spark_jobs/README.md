@@ -2,6 +2,8 @@
 
 PySpark workloads for ingestion and transformation stages.
 
+For a high-level architecture diagram and component map, see [../docs/architecture.md](../docs/architecture.md).
+
 ## Files
 
 - `bronze_ingestion.py`: ingest raw source data into Bronze layer outputs

@@ -2,6 +2,8 @@
 
 Synthetic CSV seed data used by local ingestion and transformation flows.
 
+For a high-level architecture diagram and component map, see [../../../docs/architecture.md](../../../docs/architecture.md).
+
 ## Files
 
 - `customers.csv`
