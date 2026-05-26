@@ -11,26 +11,33 @@ This document provides a high-level overview of the Snowflake-DBT-On-AWS platfor
 > *(If viewing locally, see `docs/images/architecture_diagram.png`. If not present, use the Mermaid diagram below as a reference.)*
 
 ```mermaid
-graph TD
-    A[Source Data (CSV, API)] --> B[MinIO (S3-compatible)]
-    B --> C[Spark (Bronze/Silver)]
-    C --> D[DuckDB (Warehouse)]
-    D --> E[dbt-runner]
-    E --> D
-    D --> F[DuckDB UI]
-    E --> G[Airflow]
-    G --> C
-    G --> E
-    G --> D
-    G --> B
-    subgraph Docker Compose
-      B
-      C
-      D
-      E
-      F
-      G
+flowchart TD
+    SourceData --> MinIO
+    MinIO --> Spark
+    Spark --> DuckDB
+    DuckDB --> dbtRunner
+    dbtRunner --> DuckDB
+    DuckDB --> DuckDBUI
+    dbtRunner --> Airflow
+    Airflow --> Spark
+    Airflow --> dbtRunner
+    Airflow --> DuckDB
+    Airflow --> MinIO
+    subgraph DockerCompose
+      MinIO
+      Spark
+      DuckDB
+      dbtRunner
+      DuckDBUI
+      Airflow
     end
+    SourceData["Source Data (CSV, API)"]
+    MinIO["MinIO (S3-compatible)"]
+    Spark["Spark (Bronze/Silver)"]
+    DuckDB["DuckDB (Warehouse)"]
+    dbtRunner["dbt-runner"]
+    DuckDBUI["DuckDB UI"]
+    Airflow["Airflow"]
 ```
 
 ## Core Components
