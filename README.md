@@ -93,7 +93,7 @@ terraform apply
 ## Documentation Index
 
 - `docs/architecture.md`: project architecture summary and diagrams
-- `docs/SETUP.md`: setup details and runbook
+- `docs/runbook.md`: setup details and runbook
 - `docker/README.md`: container stack and DuckDB UI troubleshooting
 - `dbt/README.md`: dbt model layout and run commands
 - `dags/README.md`: DAG responsibilities and scheduling
