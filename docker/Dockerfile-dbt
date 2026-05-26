@@ -1,0 +1,46 @@
+# ============================================================
+# Dockerfile-dbt.dockerfile — dedicated dbt runner
+# ============================================================
+# Runs:  dbt deps && dbt run --target ${DBT_TARGET:-local}
+#
+# Local target  → DuckDB file at DBT_DUCKDB_PATH
+# Cloud targets → Snowflake (set DBT_TARGET=dev|prod + creds)
+# ============================================================
+FROM python:3.11-slim
+
+COPY --from=ghcr.io/astral-sh/uv:0.8.4 /uv /uvx /bin/
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_NO_PROGRESS=1 \
+    UV_PROJECT_ENVIRONMENT=/opt/dbt/.venv
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/dbt/project
+
+# Install Python dependencies (dbt-core, dbt-duckdb, dbt-snowflake, etc.)
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project && \
+    uv pip install --python /opt/dbt/.venv/bin/python dbt-duckdb==1.7.3
+
+ENV PATH="/opt/dbt/.venv/bin:${PATH}"
+
+# Copy dbt project files
+COPY dbt/ /opt/dbt/project/
+# Copy profiles so dbt can connect without a host-level file
+COPY profiles.yml /opt/dbt/profiles/profiles.yml
+
+ENV DBT_PROFILES_DIR=/opt/dbt/profiles \
+    DBT_PROJECT_DIR=/opt/dbt/project \
+    DBT_TARGET=${DBT_TARGET:-local} \
+    DBT_DUCKDB_PATH=${DBT_DUCKDB_PATH:-/opt/dbt/warehouse/banking_vault.duckdb}
+
+# dbt-warehouse-volume is mounted at /opt/dbt/warehouse at runtime
+# so the DuckDB file persists across container restarts.
+
+ENTRYPOINT ["/bin/sh", "-lc"]
+CMD ["/opt/dbt/.venv/bin/dbt deps --project-dir $DBT_PROJECT_DIR --profiles-dir $DBT_PROFILES_DIR && /opt/dbt/.venv/bin/dbt run --project-dir $DBT_PROJECT_DIR --profiles-dir $DBT_PROFILES_DIR --target $DBT_TARGET"]

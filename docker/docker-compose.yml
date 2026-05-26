@@ -1,0 +1,433 @@
+# ============================================================
+# Banking Data Platform — Docker Compose (local dev stack)
+# ============================================================
+# Services (startup order):
+#   1. minio              — local S3-compatible object storage
+#   2. minio-init         — creates bronze / silver / gold buckets
+#   3. postgres           — Airflow metadata DB
+#   4. spark-master       — Spark standalone master
+#   5. spark-worker       — Spark standalone worker (1 replica)
+#   6. dbt-runner         — runs dbt deps + dbt run on startup
+#   7. duckdb-ui          — official DuckDB Local UI (http://localhost:4213)
+#   8. airflow-init       — DB migration + admin user creation
+#   9. airflow-webserver  — Airflow UI  (http://localhost:8080)
+#  10. airflow-scheduler  — Airflow scheduler
+#
+# Local mode (default): dbt → DuckDB,  S3 → MinIO,  Spark → standalone
+# Cloud mode:           set DBT_TARGET=dev + real creds in .env
+#
+# Quick start:
+#   cp docker/.env.example .env  # fill in secrets
+#   docker compose -f docker/docker-compose.yml up --build
+# ============================================================
+
+# ── Shared extensions ──────────────────────────────────────
+
+x-logging: &logging-common
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# ── Shared Spark environment (master + worker + jobs) ──────
+x-spark-common:
+  &spark-common
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile-spark-local
+  environment:
+    &spark-common-env
+    # MinIO / S3A
+    AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+    AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+    S3_ENDPOINT: http://minio:9000
+    SPARK_MASTER_URL: spark://spark-master:7077
+  depends_on:
+    minio:
+      condition: service_healthy
+  logging: *logging-common
+
+# ── Shared Airflow environment ─────────────────────────────
+x-airflow-common:
+  &airflow-common
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile-airflow
+  environment:
+    &airflow-common-env
+    # ── Airflow core ───────────────────────────────────────
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    # ── AWS / MinIO (local S3) ─────────────────────────────
+    # In local mode these point at MinIO.  Override in .env
+    # with real AWS creds when DBT_TARGET=dev or DBT_TARGET=prod.
+    AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+    AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+    # Routes boto3 S3 calls to MinIO (path-style required).
+    AWS_ENDPOINT_URL_S3: ${AWS_ENDPOINT_URL_S3:-http://minio:9000}
+    AWS_S3_ADDRESSING_STYLE: path
+    # ── Spark ─────────────────────────────────────────────
+    SPARK_MASTER_URL: spark://spark-master:7077
+    # ── Snowflake (unused in local mode) ───────────────────
+    # Set these in .env when DBT_TARGET=dev or DBT_TARGET=prod.
+    SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT:-}
+    SNOWFLAKE_USER: ${SNOWFLAKE_USER:-}
+    SNOWFLAKE_PASSWORD: ${SNOWFLAKE_PASSWORD:-}
+    # ── dbt target ─────────────────────────────────────────
+    # local → DuckDB + MinIO (no cloud creds needed)
+    # dev   → Snowflake DEV database
+    # prod  → Snowflake PROD database
+    DBT_TARGET: ${DBT_TARGET:-local}
+    DBT_DUCKDB_PATH: /opt/dbt/warehouse/banking_vault.duckdb
+    MINIO_ENDPOINT: minio:9000
+  volumes:
+    - ../dags:/opt/airflow/dags
+    - ../logs:/opt/airflow/logs
+    - ../dbt:/opt/airflow/dbt
+    - ../spark_jobs:/opt/airflow/spark_jobs
+    - ../plugins:/opt/airflow/plugins
+    - dbt-warehouse-volume:/opt/dbt/warehouse
+    - /var/run/docker.sock:/var/run/docker.sock
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    &airflow-common-depends-on
+    postgres:
+      condition: service_healthy
+    minio:
+      condition: service_healthy
+
+# ── Services ───────────────────────────────────────────────
+
+services:
+
+  # ----------------------------------------------------------
+  # 1. MinIO — local S3-compatible object storage
+  #    S3 API  (compose): http://minio:9000
+  #    S3 API  (host):    http://localhost:9000
+  #    Console (host):    http://localhost:9001
+  #    Buckets created by minio-init: bronze, silver, gold
+  # ----------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    ports:
+      - "9000:9000"   # S3-compatible API
+      - "9001:9001"   # MinIO web console
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging-common
+
+  # ----------------------------------------------------------
+  # 2. MinIO init — creates medallion buckets (runs once)
+  # ----------------------------------------------------------
+  minio-init:
+    image: minio/mc:latest
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - ../spark_jobs/data/raw:/seed/raw:ro
+    entrypoint: >
+      /bin/sh -c "
+        set -e;
+        mc alias set local http://minio:9000 $${MINIO_ROOT_USER:-minioadmin} $${MINIO_ROOT_PASSWORD:-minioadmin};
+        mc mb --ignore-existing local/bronze;
+        mc mb --ignore-existing local/silver;
+        mc mb --ignore-existing local/gold;
+        mc mb --ignore-existing local/raw-bucket;
+        mc cp /seed/raw/customers.csv local/raw-bucket/customers/customers.csv;
+        mc cp /seed/raw/accounts.csv local/raw-bucket/accounts/accounts.csv;
+        mc cp /seed/raw/transactions.csv local/raw-bucket/transactions/transactions.csv;
+        echo 'MinIO buckets and seed data ready: raw-bucket, bronze, silver, gold';
+      "
+    logging: *logging-common
+
+  # ----------------------------------------------------------
+  # 3. PostgreSQL — Airflow metadata database
+  # ----------------------------------------------------------
+  postgres:
+    image: postgres:13
+    restart: always
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging-common
+
+  # ----------------------------------------------------------
+  # 4. Spark master — standalone cluster master
+  #    Web UI (host): http://localhost:8181
+  #    Master URL:    spark://spark-master:7077
+  #    Image: apache/spark:3.5.1 (official image)
+  # ----------------------------------------------------------
+  spark-master:
+    <<: *spark-common
+    hostname: spark-master
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile-spark-local
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    environment:
+      <<: *spark-common-env
+      SPARK_MODE: master
+      SPARK_RPC_AUTHENTICATION_ENABLED: "no"
+      SPARK_RPC_ENCRYPTION_ENABLED: "no"
+      SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: "no"
+      SPARK_SSL_ENABLED: "no"
+    ports:
+      - "8181:8080"   # Spark master web UI (avoids collision with Airflow 8080)
+      - "7077:7077"   # Spark master submit port
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  # ----------------------------------------------------------
+  # 5. Spark worker — one worker node (scale up with --scale)
+  #    Web UI (host): http://localhost:8182
+  #    Image: apache/spark:3.5.1 (official image)
+  # ----------------------------------------------------------
+  spark-worker:
+    <<: *spark-common
+    hostname: spark-worker
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile-spark-local
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    environment:
+      <<: *spark-common-env
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-2G}
+      SPARK_WORKER_CORES: ${SPARK_WORKER_CORES:-2}
+      SPARK_RPC_AUTHENTICATION_ENABLED: "no"
+      SPARK_RPC_ENCRYPTION_ENABLED: "no"
+      SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: "no"
+      SPARK_SSL_ENABLED: "no"
+    ports:
+      - "8182:8081"   # Spark worker web UI
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ----------------------------------------------------------
+  # 6. dbt runner — runs dbt deps + dbt run against DuckDB
+  #    Shares the dbt-warehouse-volume with Airflow so DAGs
+  #    can query the same DuckDB file after a successful run.
+  # ----------------------------------------------------------
+  dbt-runner:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile-dbt
+    restart: "no"
+    environment:
+      DBT_TARGET: ${DBT_TARGET:-local}
+      DBT_DUCKDB_PATH: /opt/dbt/warehouse/banking_vault.duckdb
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      AWS_S3_ADDRESSING_STYLE: path
+    volumes:
+      - ../dbt:/opt/dbt/project
+      - ../profiles.yml:/opt/dbt/profiles/profiles.yml
+      - ../spark_jobs/data/raw:/opt/dbt/data/raw:ro
+      - dbt-warehouse-volume:/opt/dbt/warehouse
+    depends_on:
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    logging: *logging-common
+
+  # ----------------------------------------------------------
+  # 7. DuckDB Local UI — official web UI for local warehouse
+  #    UI (host): http://localhost:4213
+  # ----------------------------------------------------------
+  duckdb-ui:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile-duckdb-ui
+    restart: unless-stopped
+    ports:
+      - "4213:4213"
+    environment:
+      DUCKDB_PATH: /opt/dbt/warehouse/banking_vault.duckdb
+      DUCKDB_UI_MAX_ROWS: ${DUCKDB_UI_MAX_ROWS:-200}
+      DUCKDB_UI_QUERY_TIMEOUT_MS: ${DUCKDB_UI_QUERY_TIMEOUT_MS:-10000}
+      DUCKDB_UI_USERNAME: ${DUCKDB_UI_USERNAME:-}
+      DUCKDB_UI_PASSWORD: ${DUCKDB_UI_PASSWORD:-}
+      DUCKDB_UI_HEALTH_TOKEN: ${DUCKDB_UI_HEALTH_TOKEN:-}
+    volumes:
+      - dbt-warehouse-volume:/opt/dbt/warehouse:ro
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:4213/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      dbt-runner:
+        condition: service_completed_successfully
+    logging: *logging-common
+
+  # ----------------------------------------------------------
+  # 8. Airflow init — DB migrations + admin user (runs once)
+  # ----------------------------------------------------------
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    restart: "no"
+    command:
+      - -c
+      - |
+        function ver() {
+          printf "%04d%04d%04d%04d" $${1//./ }
+        }
+        airflow_version=$$(AIRFLOW__LOGGING__LOGGING_LEVEL=INFO && gosu airflow airflow version)
+        airflow_version_comparable=$$(ver $${airflow_version})
+        min_airflow_version=2.2.0
+        min_airflow_version_comparable=$$(ver $${min_airflow_version})
+        if (( airflow_version_comparable < min_airflow_version_comparable )); then
+          echo -e "\033[1;31mERROR: Airflow $${airflow_version} is too old (min: $${min_airflow_version})\e[0m"
+          exit 1
+        fi
+        if [[ -z "$${AIRFLOW_UID}" ]]; then
+          echo -e "\033[1;33mWARNING: AIRFLOW_UID not set — files may be owned by root on Linux.\e[0m"
+        fi
+        one_meg=1048576
+        mem_available=$$(($$(getconf _PHYS_PAGES) * $$(getconf PAGE_SIZE) / one_meg))
+        cpus_available=$$(grep -cE 'cpu[0-9]+' /proc/stat)
+        disk_available=$$(df / | tail -1 | awk '{print $$4}')
+        if (( mem_available < 4000 )); then
+          echo -e "\033[1;33mWARNING: Low memory ($${mem_available} MB). Recommend >= 4 GB.\e[0m"
+        fi
+        if (( cpus_available < 2 )); then
+          echo -e "\033[1;33mWARNING: Only $${cpus_available} CPU(s). Recommend >= 2.\e[0m"
+        fi
+        if (( disk_available < one_meg * 10 )); then
+          echo -e "\033[1;33mWARNING: Low disk space. Recommend >= 10 GB free.\e[0m"
+        fi
+        mkdir -p /sources/logs /sources/dags /sources/plugins
+        chown -R "$${AIRFLOW_UID}:0" /sources/{logs,dags,plugins}
+        mkdir -p /opt/dbt/warehouse
+        chown -R "$${AIRFLOW_UID}:0" /opt/dbt/warehouse
+        chmod -R g+rwX /opt/dbt/warehouse
+        exec /entrypoint airflow version
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+    user: "0:0"
+    volumes:
+      - ../:/sources
+    logging: *logging-common
+
+  # ----------------------------------------------------------
+  # 9. Airflow webserver — UI at http://localhost:8080
+  #    Default credentials: airflow / airflow
+  # ----------------------------------------------------------
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    restart: always
+    ports:
+      - "8080:8080"
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1536M
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+    logging: *logging-common
+
+  # ----------------------------------------------------------
+  # 10. Airflow scheduler — DAG scheduling and task queuing
+  # ----------------------------------------------------------
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: always
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1536M
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+    logging: *logging-common
+
+# ── Volumes ────────────────────────────────────────────────
+
+volumes:
+  postgres-db-volume:
+  dbt-warehouse-volume:   # DuckDB warehouse file (shared: dbt-runner ↔ Airflow)
+  minio-data:             # MinIO object storage (bronze / silver / gold / raw-bucket)
+  spark-work-dir:         # Spark local temp storage
+
+# ── Networks ───────────────────────────────────────────────
+
+networks:
+  default:
+    name: banking_platform_network

@@ -1,0 +1,40 @@
+# ============================================================
+# Dockerfile-spark-local.dockerfile — local Spark image
+# ============================================================
+# Used by docker-compose spark-master and spark-worker.
+# Includes S3A Hadoop JARs for MinIO reads/writes.
+# Does NOT include Snowflake JARs (not needed locally).
+# ============================================================
+FROM apache/spark:3.5.0
+
+COPY --from=ghcr.io/astral-sh/uv:0.8.4 /uv /uvx /bin/
+
+USER root
+
+WORKDIR /opt/spark/project
+
+# Install Python dependencies
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
+
+ENV PATH="/opt/spark/project/.venv/bin:${PATH}"
+
+# ── S3A / Hadoop AWS JARs ──────────────────────────────────
+# Required for spark.read/write to MinIO via s3a://
+ADD https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar \
+    /opt/spark/jars/
+ADD https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar \
+    /opt/spark/jars/
+
+RUN chmod 644 \
+    /opt/spark/jars/hadoop-aws-*.jar \
+    /opt/spark/jars/aws-java-sdk-bundle-*.jar
+
+# Copy spark-defaults.conf so every submission picks up S3A settings
+COPY docker/spark-defaults.conf /opt/spark/conf/spark-defaults.conf
+
+# Copy Spark jobs
+# UID 185 is the spark user in apache/spark
+COPY --chown=185:185 spark_jobs/ /opt/spark/jobs/
+
+USER 185

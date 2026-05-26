@@ -1,0 +1,49 @@
+# ============================================================
+# Dockerfile-spark.dockerfile — production Spark image
+# ============================================================
+# Used by Kubernetes spark-submit jobs in DEV/PROD.
+# Includes Snowflake connector JARs + S3A Hadoop JARs.
+# ============================================================
+# Official Apache Spark image (non-root by default, K8s-ready).
+FROM apache/spark:3.5.0
+
+COPY --from=ghcr.io/astral-sh/uv:0.8.4 /uv /uvx /bin/
+
+USER root
+
+WORKDIR /opt/spark/project
+
+# Install Python dependencies via uv
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
+
+ENV PATH="/opt/spark/project/.venv/bin:${PATH}"
+
+# ── Snowflake JARs ─────────────────────────────────────────
+# Required for Spark ↔ Snowflake connector
+ADD https://repo1.maven.org/maven2/net/snowflake/spark-snowflake_2.12/2.12.0-spark_3.4/spark-snowflake_2.12-2.12.0-spark_3.4.jar \
+    /opt/spark/jars/
+ADD https://repo1.maven.org/maven2/net/snowflake/snowflake-jdbc/3.14.4/snowflake-jdbc-3.14.4.jar \
+    /opt/spark/jars/
+
+# ── S3A / Hadoop AWS JARs ──────────────────────────────────
+# Required for spark.read/write to S3 (real AWS or MinIO)
+ADD https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar \
+    /opt/spark/jars/
+ADD https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar \
+    /opt/spark/jars/
+
+RUN chmod 644 \
+    /opt/spark/jars/spark-snowflake_2.12-*.jar \
+    /opt/spark/jars/snowflake-jdbc-*.jar \
+    /opt/spark/jars/hadoop-aws-*.jar \
+    /opt/spark/jars/aws-java-sdk-bundle-*.jar
+
+# Copy Spark jobs
+COPY --chown=185:185 spark_jobs/ /opt/spark/jobs/
+
+# UID 185 is the spark user in apache/spark
+USER 185
+WORKDIR /opt/spark/jobs
+
+ENTRYPOINT ["spark-submit"]

@@ -1,0 +1,39 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: spark-bronze-ingestion
+spec:
+  template:
+    spec:
+      serviceAccountName: spark-sa  # Required for Spark to launch executors
+      containers:
+      - name: spark-job
+        image: yourdockerhub/spark:latest
+        command: ["/opt/spark/bin/spark-submit"]
+        args: 
+          - "--master"
+          - "k8s://https://kubernetes.default.svc"
+          - "--deploy-mode"
+          - "cluster"
+          - "--conf"
+          - "spark.kubernetes.container.image=yourdockerhub/spark:latest"
+          - "/opt/spark_jobs/bronze_ingestion.py"
+        resources:
+          requests:
+            cpu: "1"
+            memory: "2Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+        env:
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: aws-creds
+              key: access_key
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aws-creds
+              key: secret_key
+      restartPolicy: OnFailure
