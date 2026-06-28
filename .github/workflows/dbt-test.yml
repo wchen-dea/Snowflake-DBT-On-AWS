@@ -1,17 +1,10 @@
 name: dbt Tests & Documentation
 
 on:
-  push:
-    branches: [prod]
-    paths:
-      - 'dbt/**'
   pull_request:
-    branches: [prod]
+    branches: [dev]
     paths:
       - 'dbt/**'
-  schedule:
-    - cron: '0 0 * * 0'  # Weekly on Sunday
-  workflow_dispatch:
 
 jobs:
   dbt-test:
